@@ -3,7 +3,7 @@
 This README will establish general principles and information for working on research from this templated starting point. Update it from below the end of my guidelines with project-specific documentation. 
 
 General information:
-- You are on a SLURM-based HPC cluster with cpu, cpu_amd, gpu (8 x H100 nodes), and gpu_a100 (2 x A100 nodes) partitions. You should generally prefer the use of A100s as they are cheaper. You should generally use the vis-lang conda environment. Some datasets can be found at: /u/ericx003/data
+- You are on a SLURM-based HPC cluster with cpu, cpu_amd, gpu (8 x H100 nodes), and gpu_a100 (2 x A100 nodes) partitions. You should generally prefer the use of A100s as they are cheaper. You should generally use the bioclip conda environment. Some datasets can be found at: /u/liv/bdbk/data. Some checkpoints can be found at: /u/liv/bdbk/ckpt. Refer to /u/liv/{.hpc_env.sh,.bash_profile,.bashrc} for global and project-level environment variables.
 
 How to use this starting directory:
 
