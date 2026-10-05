@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from src.data.tol_catalog import RANKS
 from src.data.tol_store import to_model_input
+from src.models.losses import DEN_FLOOR
 
 ZERO_SUM_TOL = 1e-10
 
@@ -131,8 +132,10 @@ class Bank:
         for d in range(6):
             m_a = self.m_nodes[d][self.anc[:, d]]
             step, pos = self.m_s - m_a, m_a - self.root
-            c2 = (step * pos).sum(1) ** 2 / ((step * step).sum(1) * (pos * pos).sum(1))
-            terms[:, d] = torch.where(P_mask[:, d], c2, torch.zeros_like(c2))
+            step2, pos2 = (step * step).sum(1).clamp_min(DEN_FLOOR), (pos * pos).sum(1)  # line 112's δ, as in penalty_local
+            valid = P_mask[:, d] & (pos2 > 0)
+            c2 = (step * pos).sum(1) ** 2 / (step2 * torch.where(valid, pos2, torch.ones_like(pos2)))
+            terms[:, d] = torch.where(valid, c2, torch.zeros_like(c2))
         for name, sel in (("penalized", ~heldout), ("heldout", heldout)):
             out[f"L_star/{name}"] = float(terms[sel].sum(1).mean())
             for d in range(6):
