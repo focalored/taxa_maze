@@ -1,0 +1,20 @@
+# @package _global_
+# Pilot 1 arm (c): lvl. Usage: sbatch scripts/p1/train.sh experiment=p1/c_lvl model.lr=1e-4
+defaults:
+  - override /model: p1
+  - override /trainer: p1_ddp
+  - override /callbacks: p1
+  - override /logger: wandb
+
+task_name: p1
+seed: 42
+version: 1
+tags: ["p1", "c", "lvl"]
+model:
+  arm: c
+  lam: 0.0
+run_name: p1c_lvl_lr${sci:${model.lr}}_s${seed}_v${version}
+
+hydra:
+  run:
+    dir: ${paths.log_dir}/p1/${run_name}/${now:%Y-%m-%d_%H-%M-%S}_j${oc.env:SLURM_JOB_ID,local}

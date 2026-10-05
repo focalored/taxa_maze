@@ -1,9 +1,14 @@
 # https://wandb.ai
+# Official runs use this logger. Name and id are both ${run_name} (agent/USAGE.md, "Run naming"),
+# so a resume from checkpoint continues the same wandb run instead of starting a new one.
 wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
-  project: "moe_db"
+  project: "taxa_maze"
   entity: "multimodal_lab"
-  tags: ${task_name}
-  group: ""
+  name: ${run_name}
+  id: ${run_name}
+  group: ${task_name}
+  tags: ${tags}
+  resume: "allow"
   log_model: False
   save_dir: "${paths.output_dir}"

@@ -22,3 +22,9 @@ Documentation Guidelines:
 
 
 ##### MODIFY UNDER THIS LINE #####
+
+## Conversation conventions
+- Hold every reply to a pointer and an outcome: where the full content lives on disk, and the result in a sentence or two. Full analyses go into files (`audit/`, `agent/`), not into the conversation.
+- Still surface, in the reply itself, every decision you made and every update or detail the user needs to follow along, one line each, so they can catch a decision immediately. The reasoning behind it stays in the file.
+- Elaborate further only when necessary, for example when answering a direct question.
+- When asked about a choice you made, answer the question first: what you chose and why. Do not assume the question is a challenge or a request to change it. Do not concede a mistake you have not made. Change course only when asked to, or when the answer itself shows a real error.

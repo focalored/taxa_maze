@@ -190,3 +190,205 @@ BioCLIP 1 and 2 (https://arxiv.org/abs/2311.18803; https://arxiv.org/pdf/2505.23
   - Before training: Eval harness runs end-to-end on iNat21-val and reproduces all rows on the cached embeddings (/projects/bdbk/liv/repos/tol_embed/results/probe_cache/inat21-val/bioclip2/, and probe_cache_b16/inat21-val/<ckpt>/ for the other five), and for re-encoded images, every row at cosine >= 0.9999 against the cache.
 - The bank and optimizer state need to be checkpointed alongside the model at every ckpt, because it updates with training. Reasonable checkpointing cadence works.
 - Environemnt: bioclip conda env; prefer A100s; allocation from `configs/paths/default.yaml`.
+
+### Amendments
+
+#### Amendment 1 (2026-10-04): decisions from the spec preflight
+
+- **Sources.**
+  - Decided by the spec's owner on 2026-10-02, in section 3 of `audit/2026-10-02_spec_preflight.md`.
+  - Decided on 2026-10-04, in section 6 of `audit/2026-10-04_B2_B3_check.md`, together with the readings in section 5 of that report.
+  - The S9 rule was confirmed by the owner on 2026-10-04, in these words: "confirmed: the new rule for S9 "does this species field contain a real epithet?" is more exhaustive while correctly keeping species fields that contain a real species epitheti plus a placeholder/tag/author-name."
+- **No results seen.** No training run or evaluation of pilot 1 had started when any item below was decided.
+- **Precedence.** Where this block conflicts with the text above it, this block governs. Checkers compare the implementation against this block first.
+- **References.** Line numbers refer to the text above, which is the 90a7d38 version. Item IDs (S1, S2, …) are those of the preflight report.
+- **Later changes.** A later change to anything here gets its own dated amendment below this one. That includes moving a directory back to `/projects/bdbk`.
+
+##### Paths
+
+- **P1. Repo location.**
+  - The repo moved to `/u/liv/repos/taxa_maze` on 2026-10-04, off the over-quota `/projects/bdbk` allocation.
+  - The old path `~/bdbk/repos/taxa_maze` (= `/projects/bdbk/liv/repos/taxa_maze`) is now a symlink to it, and stays valid.
+  - Nothing else moves: the data, the BioCLIP 1 checkpoint and tol_embed stay at the paths above, and pilot 1 only reads them. The owner decided on 2026-10-04 not to move tol_embed.
+  - The store and the run outputs are the one other path change (S1).
+  - Reason: VAST blocks writes to an allocation once its soft-quota grace period ends. For `/projects/bdbk` that is about 2026-10-07 14:35 CDT.
+
+##### Data
+
+- **S1 (lines 49, 191). The store and the run outputs.**
+  - Store the extracted images as a few large uint8 memmap files (N × 224 × 224 × 3) plus a uuid-to-row index. Each crop is stored after Resize, CenterCrop and RGB conversion, and before ToTensor and Normalize.
+  - The store and every run output live on the `/u` filesystem under `/u/liv`, not under `~/bdbk/data`. Run outputs are Hydra run directories, logs, checkpoints, wandb files, Slurm logs and smoke-test outputs. The same goes for `HF_HOME` and `WANDB_DIR` in the job scripts.
+  - Test: a path's resolved form (`readlink -f`) must not start with `/projects/bdbk`. So nothing goes under `/u/liv/bdbk`, which is a symlink into `/projects/bdbk`.
+  - The store holds every complete-lineage EOL train and val image, including the rows S9 drops, so the S9 flag can be turned off without a rebuild.
+  - Reason: `/projects/bdbk` is over its soft file quota (P1). uint8 crops are exactly what the eval transform hands to ToTensor, so they are lossless (line 49).
+- **S52 (lines 41-42, 47, 49, 74). Oversize images.**
+  - Keep the 215 shard images that PIL refuses by default: raise `PIL.Image.MAX_IMAGE_PIXELS` when building the store.
+  - Encode the 206 of them with a complete lineage fresh (fp32 weights, fp16 autocast, as the cache was made), so the bank seed (line 74) and the ToL-val dedup (S26) cover them.
+  - The line-50 smoke test samples only uuids that have a cache row.
+  - Line 47's val count for `image_set_60` becomes 91,225, the tar's count, because the 3 oversize val images are kept.
+  - Asserted counts:
+    - 5,908,775 train and 310,899 val EOL rows;
+    - 5,372,586 and 282,542 after the lineage drop;
+    - 5,298,907 and 278,613 after the S9 drop with the flag on.
+  - Reason: lines 41-42 count these images, and the spec's only drop rule is an incomplete lineage.
+- **S9 (lines 41, 42, 53). Species fields with no real species epithet.**
+  - **Rule.** A row counts as missing its species rank (line 53) when its species field contains no real species epithet. Such a row is dropped from training (bank, sampler and labels) and from ToL-val before deduplication.
+  - **The frozen list.** The dropped rows are exactly those whose full seven-rank key is listed in `specs/pilot1_s9_missing_species_keys.txt`.
+    - The file holds 8,084 keys, one per line, sorted, UTF-8, ending with a newline. Its sha256 is `3ac09b97abc94748a3368c4d96992aaad2eb590ef63823e98213232ca31fbf64`.
+    - It is built by `scripts/preflight/s9_final_keys.py` from the census in `audit/2026-10-02_S9_epithet_census.md`.
+    - The list governs, including where the census missed a case.
+  - **Dropped kinds** (keys, train images):
+    - single-word author names (7,307, 71,302), for example `latreille`;
+    - single-word placeholders (681, 1,566), for example `sp.`, `xx`, `species`, `nov.`, `?`, and cultivar names in quotes;
+    - author-only strings of several words (46, 477), for example `tourn. ex`;
+    - subgenus, section and series labels (21, 161), for example `subg. urostigma`;
+    - `sp.` plus a tag or locality (10, 107), for example `sp. a`, `sp. 2`, `sp. silk`;
+    - morph labels, cultivar markers and cultivar names (16, 46), for example `morph white`;
+    - machine tags with nothing else (3, 20).
+  - **Kept, because the field contains a real epithet:**
+    - `cf.`, `aff.` or `nr.` plus an epithet;
+    - an epithet plus a doubt mark (`gracilis?`);
+    - an epithet with an author, tag or placeholder appended (`cabritii fischer`, `sagittifolia spp.`);
+    - an epithet with a stray period (`deliciosa.`);
+    - subspecies, hybrids, and `sp.` plus an epithet (`sp. attenuata`).
+  - **Flag.** A config flag controls the S9 drop, and every run logs its value. With the flag off, no S9 row is dropped; the lineage drop of lines 41, 42 and 53 still applies. With the flag on, 73,679 train and 3,929 val images are dropped. Log the dropped keys and image counts.
+  - **Recounts.** Every count derived from the image or species lists is computed after the drop:
+    - steps per epoch: 647 at B = 8192, which is 646 full batches plus one short batch, as in preflight reading S7;
+    - warmup steps: 65;
+    - group counts, and the held-out 5% (line 143).
+  - Line 94 counts the λ window in steps, so it stays at steps 50-250.
+  - Reason: such a field names no species. As a species label, it puts a fake class beside the real species of its genus in the contrastive loss, and a non-species leaf in the penalty. The largest one, `Bombus|latreille` (10,152 images), was a genus label.
+- **S26 (line 42). ToL-val dedup.**
+  - Use the frozen BioCLIP 1 cache, L2-normalized in fp32 or higher, with the full seven-rank key, against complete-lineage train images.
+  - Compute it once, after the S9 drop, save it, and log the count. The 206 oversize images get fresh fp16 encodes for this step (S52).
+  - Reason: only the BioCLIP 1 cache exists before training, and a fixed set keeps the LR and checkpoint choices comparable.
+
+##### Model and loss
+
+- **S20 (line 61). logit_scale.** It is learnable, and clamped to [0, ln 100] after every optimizer step. It starts at ln 100, so it can only fall. Reason: this follows the training convention of BioCLIP 1's code.
+- **S12 (lines 70, 92, 187). Zero-sum tolerance.**
+  - The bank is fp64. The zero-sum check uses an absolute tolerance of 1e-10. This replaces line 70's "exact" and line 92's "==": rounding is allowed in fp64 too.
+  - On a small real subtree (for example, a family with at least 3 genera and uneven species counts), after at least 100 real updates, assert for every node that max |m_a − (1/n_a) Σ m_s| ≤ 1e-10 and |Σ_c n_c (m_c − m_a)| ≤ 1e-10 × n_a.
+  - Apply the same check during training, and log the largest value seen.
+  - Reason: incremental and fresh means add in different orders, so they never match bit for bit. Gaps reach about 3e-15 in fp64, while a real bug moves m_a by about 1e-6 or more.
+- **S21 (lines 52, 102, 181). Penalty skip rule.** The penalty uses P_s exactly as line 102 defines it, including ancestors that have one child taxon. Line 52's single-child rule applies only to the bank monitor (line 181). Log line 52's single-child counts per rank. Reason: line 143 names P_s as the definition.
+- **S22 (lines 100, 107, 117). Penalty weighting.**
+  - Each in-batch species term is weighted by 1/g_s, where g_s is the species' number of groups per epoch: L_B = (1/B) Σ_{s∈B} ℓ_s(muhat_s) / g_s. This matches L* (line 100) up to a constant.
+  - Line 117's uniform weight within a batch is replaced by 1/g_s, and n_batch is not applied as an extra factor.
+  - Line 107's unweighted form stays available behind a config flag, which is recorded in each run's config. A test checks that both forms agree when every g_s = 1.
+  - Pilot 1 runs only the 1/g_s form, and λ is calibrated under it. A run with line 107's form needs its own λ calibration.
+  - Note: the penalty is species-uniform, so it may barely move individual images of head species.
+  - Reason: under line 107, a species weighs as much as its number of groups (up to 299 at K = 16), unlike the canonical L*.
+- **S15 (lines 115, 178). Controls keep the bank.**
+  - Arms (a) and (c) keep the full bank: EMA updates and the per-epoch refresh.
+  - They log every monitor: the penalty and its six terms, the gradient monitor (S16) and the bank monitor. The penalty stays out of their loss.
+  - Reason: λ (line 94) can only come from the sweep this way, and all four arms then have the same monitors.
+- **S25 (lines 91, 122, 146, 165). Bank refresh.**
+  - The per-epoch refresh is split across GPUs, under fp16 autocast with fp32 weights, instead of line 165's bf16. Values are cast to fp32 or fp64 before normalizing and averaging. fp64 per-species sums and counts are all-reduced, so every GPU holds the same bank.
+  - Seed the bank from the cache, plus fresh encodes of any train image the cache lacks (S52). The BioCLIP 1 cache counts as line 122's full pass.
+  - Apply EMA deltas in a fixed order. Log the step-0 gap between the bf16 and fp16 species means as the drift floor.
+  - Reason: this is the most exact encode that fits line 91's 2 GPU-hour bound, and it matches the seed cache and the eval precision.
+
+##### Batching
+
+- **S2 (lines 141-142).** K = 16 in every arm. There is no K sweep.
+- **S8 (lines 144, 159-160).** B = 8192 in every run, on 4 A100s: 2 nodes × 2 GPUs, 2,048 per GPU. B is not raised. Report the spare memory, which goes to checkpointing fewer blocks.
+- **S3 (lines 84, 142-143).** Under S2 and S8 no extra rule is needed. The sampler puts each species' groups in distinct batches, so a batch holds at most one group per species, and an assertion checks this every epoch.
+- Reason for all three: K = 16 at B = 8192 satisfies lines 84, 142 and 143 for every species. After S9 the largest species, `Pandion|haliaetus` (4,775 images), needs 299 groups, against 647 steps per epoch.
+
+##### Optimization
+
+- **S19 (lines 158-165).** AdamW: betas (0.9, 0.98), eps 1e-6, weight decay 0, one parameter group (LoRA and logit_scale share the LR). Reason: this is the open_clip default for ViTs that BioCLIP 1 used.
+- **S5 (lines 161-162).**
+  - Linear warmup over 1% of total steps (65 steps after S9), then cosine decay to 0 at the end of epoch 10, updated every optimizer step.
+  - The same schedule applies to both sweep runs and every arm, and is fixed before the sweep.
+  - Reason: this is BioCLIP 1's schedule. The shortest allowed warmup keeps nearly all of line 94's window at the chosen LR.
+- **S6 (line 94). λ calibration.**
+  - Each penalized arm gets its own λ = 0.2 / mean_t r_t, over steps 50-250. Here r_t = ‖∇L_B‖ / ‖∇L_con‖, without λ, as measured by the S16 monitor.
+  - λ for (d) comes from the chosen (c) sweep run, and λ for (b) from arm (a). Log the realized ratio λ·r_t in (b) and (d).
+  - Reason: line 94 fixes the ratio at 0.2, and the flat and level-restricted losses have different gradient sizes.
+- **S29 (lines 155, 159, 161). Time budget.**
+  - The 24 hours are an estimate, not a cap. Measure the step and refresh times in the smoke runs and report the projected total before the sweep.
+  - Do not stall a run waiting for approval of the hours.
+  - Do not cut epochs to fit the budget: every arm trains all 10 epochs. The losing sweep run still stops after epoch 3 (line 161).
+  - Reason: line 161 runs the chosen schedule to completion over 10 epochs, and the spec has no rule for cutting a run short.
+
+##### Evaluation
+
+- **S4 (lines 161, 165, 172). ToL-val accuracy.**
+  - At each rank, the candidates are the taxa present in the deduplicated, complete-lineage val set (after S9), and all its images are scored.
+  - Template "a photo of [label].". Precision as line 170: fp16 autocast for images, fp32 for text and scoring. Lightning's bf16 autocast (line 165) is kept out of validation.
+  - Also log the lineage template and seen-species-only accuracy, as extras.
+  - Reason: this applies the iNat21 rule to ToL-val. The candidates are the benchmark's own taxa, and the template and precision are the decisive ones of lines 170-171.
+- **S27 (line 172). Checkpoint selection.**
+  - The iNat21 checkpoint is the epoch with the best species top-1 on deduplicated ToL-val with "a photo of [label].", over the ends of epochs 1-10. A tie goes to the earlier epoch.
+  - Also log the seven-rank mean, and epoch 0 (untouched BioCLIP 1) as a reference only.
+  - Keep every epoch's checkpoint (model, LoRA, bank and optimizer).
+  - Reason: line 161 uses species-level ToL-val accuracy for the only other ToL-val decision, and line 171 makes "a photo of" the decisive template.
+- **S31 (line 37). The ±1-point bar.**
+  - Apply it per rank, with three labels: better (ahead by more than 1 point), matched (within 1 point), worse (behind by more than 1 point).
+  - "Beating" means better. "Competitive" and "matched or better" mean matched or better.
+  - The baselines are the table cells: RCME lineage, BFL-Euc photo and BioCLIP 1 photo. "BFL" in the genus and species clause means BFL-Euc.
+  - Compare integer counts of correct images.
+  - Reason: a ±1 margin sorts results into better, tie and worse. "Levels" in line 37 reads per rank, and "(see table)" points to the cells. Integer counts avoid rounding traps.
+- **S32 (lines 37, 174). Floor versus margin.**
+  - The two rules stay separate. The floor is BioCLIP 1's count, 70,186 correct, with no margin.
+  - Flag the failure mode if species correct < 70,186 while the coarse ranks improve over BioCLIP 1.
+  - In the band of 69,186-70,185 correct, report "matched under the bar, below the floor" and make no call.
+  - Reason: both rules stay as written. Line 37 says "If confused, don't make a verdict and just report everything faithfully", and line 174 names BioCLIP 1's own value.
+
+##### Monitors
+
+- **S16 (line 179). Gradient monitor.**
+  - Calibrate on all trainable parameters: LoRA in both towers, plus logit_scale. Also log the ratio and cosine for the image-tower LoRA alone.
+  - Take each loss's gradient from its own backward pass on the same forward. Average it across GPUs by hand, as DDP would, and read it before clipping.
+  - Keep the number of GPUs fixed. Use the contrastive all-gather that passes gradients back, so the summed gradient equals the one-GPU gradient (preflight reading S17).
+  - Log at every step from 50 to 250, then every 50 steps.
+  - Reason: the gradient that the optimizer and clipping see covers every trained parameter, and line 61 trains logit_scale. The image-only log shows whether the text tower or logit_scale drives the ratio.
+- **S24 (line 181). Bank monitor.**
+  - Log four numbers per rank: two drop rules times two averages.
+    - The literal rule drops a term when either node has a single child. The parent rule drops a term when the parent has a single child, whatever the child has.
+    - The averages are over unique parent-child edges, and over species.
+  - The headline is the parent rule, averaged over unique edges.
+  - Compute it on the refreshed bank after each epoch, and on the EMA bank at log steps.
+  - This monitor's definition is ambiguous, and its numbers deserve closer scrutiny from the spec's owner. No decision rule uses it.
+  - Reason: the owner's choice. The step is exactly zero only when the parent has a single child.
+
+##### Smoke tests
+
+- **S13 (line 189). λ = 0 reproduces the control.**
+  - Run in deterministic mode: `torch.use_deterministic_algorithms(True, warn_only=True)` and `CUBLAS_WORKSPACE_CONFIG=:4096:8`. Log which operations warn.
+  - Run the control twice. If the two runs are bit-identical, the λ = 0 run must be bit-identical too. If not, its per-step loss gap (total and each level) must stay within the largest gap between the two control runs.
+  - Test (d) at λ = 0 against (c), and (b) at λ = 0 against (a).
+  - Use seed 42, the same data order, B = 8192 on 4 GPUs and LR 1e-4, with the full penalty code running: bank EMA, all-gather and monitors.
+  - Reason: "reproduces" most naturally means exact equality. This demands it whenever the hardware can deliver it, and otherwise uses the measured run-to-run noise as the bar. Running the full penalty code shows that λ = 0 leaks nothing into training.
+
+#### Amendment 2 (2026-10-05, M1): decisions after the M1 checker
+
+- **Sources.** Decided by the spec's owner on 2026-10-05, after reading the M1 checker report (`audit/2026-10-05_M1_checker.md`) and the response to it (`audit/2026-10-05_M1_checker_response.md`). The owner's words are recorded in `agent/ACTIVE.md`, asks A11 and A12. P and O numbers below are the checker report's item IDs; S numbers are Amendment 1's.
+- **Results seen.** No training run of any arm had started. Seen: the M1 smoke-test and timing numbers (the six S13 runs, the single-GPU tests, the 2-node timing run and the drift-floor passes), and the eval gate's re-encode of the six baseline checkpoints under the harness's default setting (job 257672), including BioCLIP 1's species count of 70,193 correct against the cached 70,186.
+- **Precedence.** Where this block conflicts with the text above it, including Amendment 1, this block governs.
+
+##### Run geometry
+
+- **A2.1 (S8; lines 144, 159-160; checker P3).** B = 8192 on 2 A100s on one node, that is 1 node × 2 GPUs with 4,096 images per GPU, for every run from M2 on. All 24 transformer blocks of each tower stay activation-checkpointed; the spare memory goes to the larger per-GPU batch, not to checkpointing fewer blocks. The M1 smoke runs (S13, grad_1v4) were made on 2 nodes × 2 GPUs and stay the M1 evidence; S16's fixed GPU count holds within every run, and the grad_1v4 test shows that the gradient does not depend on the number of GPUs. No run measures the new geometry before the sweep. Reason: one-node jobs schedule more easily on `gpu_a100` and need no inter-node communication (the 2-node timing run had 18 unexplained stalls of 32-591 s), and peak memory at 2,048 images per GPU was 24.9 GiB of 80.
+
+##### Time budget
+
+- **A2.2 (S29; lines 155, 159; checker O1, O3).** No dedicated measurement of step and refresh times before the sweep, and no projected total before it. The sweep runs report their own step, refresh and evaluation times as they go. The end-to-end smoke run (60 steps, then refresh, ToL-val and a checkpoint) runs alongside the sweep to exercise the epoch-end path, not to time it, and the sweep does not wait for it. The rest of S29 stands: every arm trains all 10 epochs, and no run stalls for approval. Reason: the owner's choice; the measurement feeds no decision.
+
+##### Epoch numbering
+
+- **A2.3 (S27; lines 161, 172, 191; checker O7).** Checkpoint files and `decisions.json` use Lightning's 0-based epoch index: `epoch_00.ckpt` to `epoch_09.ckpt` are the ends of S27's training epochs 1-10, and `epoch_02.ckpt` is the end of the sweep's third epoch (line 161). The untouched model's reference evaluation is keyed `init` (metrics `val_init/...`). The S27 pick is over `epoch_00` to `epoch_09`, ties to the earlier file. The per-step log's `epoch` field uses the same index. Reason: one convention everywhere, matching Lightning's.
+
+##### Evaluation
+
+- **A2.4 (S31, S32; lines 26-37, 173-174; checker O2).** The M3 iNat21 evaluation records its encode setting: the cuDNN benchmark and deterministic flags, the batch size, the autocast dtype and the library versions. All six baseline columns of lines 26-35 are re-evaluated by the same harness under the same setting during M3, and S31's comparison cells and S32's floor are taken from these re-evaluated integer counts of correct images, not from the cached table. The setting is the harness default: fp32 weights, fp16 autocast for images, fp32 text and scoring, batch 512, `cudnn.benchmark` off, `cudnn.deterministic` on. The cached table and its exact reproduction (line 173, gate Part A) stay as the harness gate, and S32's "70,186" now reads "BioCLIP 1's re-evaluated species count". Reason: two encodes of the same weights differ by up to about 17 correct images per rank from cuDNN's algorithm choice alone, and the S32 floor has no margin.
+
+##### Decisions recorded without a rule change
+
+- **P2 (S16).** The logged gradient cosine is computed with autocast off, in fp64. The norms and the ratio r_t were already fp32.
+- **O6 (line 165; code-review note N-9).** The model is put in train mode at the start of training; the refresh and the evaluations restore the mode they find. No numeric effect: dropout is 0, there is no batch norm, and the attention fast path is off under autocast.
+- **P4 (S9).** The flag-off S9 path (prep files and loaders) stays unimplemented; the owner holds this decision.
+- **O4.** The code behind M1 is committed and pushed before the first M2 job starts; `.gitignore` no longer ignores `scripts/`.
+- **O9.** The documentation inaccuracies the checker found are fixed; small clock-stamp discrepancies are left as they are.

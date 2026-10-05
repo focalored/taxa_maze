@@ -1,0 +1,10 @@
+_target_: src.data.tol_datamodule.P1TolDataModule
+data_dir: ${paths.p1_data_dir}
+s9_drop: true          # Amendment 1 S9 flag; logged in run_info.json
+K: 16                  # Amendment 1 S2
+B: 8192                # global batch (Amendment 1 S8); 4,096 per GPU on 1 node x 2 GPUs (Amendment 2 A2.1)
+seed: ${seed}
+num_workers: 8
+chunk: 1024
+dedup_file: ${paths.p1_data_dir}/p1/tolval_dedup_drop.txt
+heldout_file: ${paths.p1_data_dir}/p1/heldout_species_s9.txt

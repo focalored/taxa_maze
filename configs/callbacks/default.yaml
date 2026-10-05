@@ -6,13 +6,14 @@ defaults:
   - smooth_metrics
   - _self_
 
-# NOTE: monitor / mode for ModelCheckpoint and EarlyStopping must be set by the
-# experiment config (e.g. ``val/coco/R@1_t2i``).  With multiple validation sets,
-# there is no sensible default — every experiment picks the metric it cares about.
-
+# Keeps the best epoch by zero-shot species top-1 on deduplicated ToL-10M val ("a photo of"
+# template; spec section 7 selects the iNat21 checkpoint this way), plus last.ckpt for resuming.
 model_checkpoint:
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch:03d}"
+  monitor: "val/tol/photo/species"
+  mode: "max"
+  save_top_k: -1
   save_last: True
   auto_insert_metric_name: False
 

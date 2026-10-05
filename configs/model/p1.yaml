@@ -1,0 +1,24 @@
+_target_: src.models.p1_module.P1Module
+arm: c                 # a flat, b flat+pen, c lvl, d lvl+pen (spec section 5)
+lr: 1e-4
+lam: 0.0               # (b), (d): 0.2 / mean r_t over steps 50-250 of the matching control (Amendment 1 S6)
+ckpt_dir: ${paths.bioclip1_ckpt}
+bank_seed_file: ${paths.p1_data_dir}/p1/bank_seed_s9.npy
+drift_floor_file: ${paths.p1_data_dir}/p1/drift_floor.json
+lora_r: 16
+lora_alpha: 32.0
+seed: ${seed}
+epochs: 10             # line 161: the schedule always counts 10 epochs; the sweep stops at trainer.max_epochs=3
+warmup_frac: 0.01
+betas: [0.9, 0.98]
+eps: 1.0e-6
+weight_decay: 0.0
+grad_clip: 1.0
+penalty_weighting: inv_groups   # Amendment 1 S22; "uniform" is line 107's form and needs its own lambda
+monitor_window: [50, 250]
+monitor_every: 50
+refresh: true
+eval_init: true
+eval_each_epoch: true
+eval_forms: [photo, lineage]
+check_zero_sum: true

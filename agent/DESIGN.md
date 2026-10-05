@@ -17,3 +17,22 @@ Maintenance:
 - Directions graduate here from ACTIVE.md once they survive their success criterion.
 
 ##### MODIFY UNDER THIS LINE #####
+
+## Evaluation logic
+- **The bank monitor is ambiguous (spec line 181; Amendment 1, S24).** "Drop any terms where one of the nodes has a single child" can mean either node (the literal reading) or only the parent (the step is exactly zero only when the parent has a single child). "Averaged over each rank" can mean over species or over unique parent-child edges. From family to genus the two drop rules keep 96% or 54% of the 68,574 edges, so the choice moves the numbers a lot.
+  - Pilot 1 logs all four variants. The headline is the parent rule averaged over unique edges, chosen by the spec's owner.
+  - These numbers deserve close scrutiny from the owner before anyone reads meaning into them.
+  - No decision rule uses this monitor: not the LR sweep, not checkpoint selection, not the verdict.
+- **Encode noise sets the resolution of integer counts (eval gate, 2026-10-04).** cuDNN's choice of convolution algorithm for the patch embedding changes fp16 embeddings by about 1e-6 in cosine. That moves iNat21 correct counts by up to about 17 images per rank between two encodes of the same weights. Under benchmark mode off, BioCLIP 1 itself re-encodes to 70,193 species-correct, against the cached 70,186.
+  - The ±1-point bar (1,000 images, S31) is far above this noise.
+  - S32's floor has no margin, so a model within about 20 images of 70,186 can land on either side depending on the encode setting. Decided (Amendment 2 A2.4, 2026-10-05): the M3 eval records its setting, and all six baselines are re-evaluated under that same setting, so the floor and the comparison cells are same-setting integer counts.
+
+## Idea → code (pilot 1, 2026-10-04)
+- Image store and decode chain: `scripts/store/build_store.py`, reader `src/data/tol_store.py` (uint8 crops; `to_model_input` = ToTensor + Normalize).
+- Catalog, lineage drop, S9 list: `src/data/tol_catalog.py`. Train tree (species keys, ancestors, n_a, P_s, g_s, held-out 5%) and ToL-val candidates: `src/data/taxonomy.py`.
+- Species groups and batches of exactly B (one group per species per batch): `src/data/tol_sampler.py`; loaders: `src/data/tol_datamodule.py`.
+- LoRA on q,v rows of `in_proj_weight` through `parametrize`, logit_scale clamp: `src/models/bioclip_lora.py`.
+- fp64 bank (EMA, ancestors, root, refresh, zero-sum check, bank monitor, L*, drift): `src/models/bank.py`.
+- BFL and flat contrastive losses in distributed form, group means, penalty with 1/g_s: `src/models/losses.py`.
+- Training step (manual optimization, hand-averaged gradients, S16 monitor, collapse monitor), refresh, ToL-val, checkpoints: `src/models/p1_module.py`; ToL-val protocol: `src/eval/tolval.py` on top of `src/eval/zeroshot.py` (the iNat21 harness and its exact-count gate).
+- Smoke tests and gates: `scripts/smoke/p1_smoke.py`, `scripts/smoke/s13_compare.py`, `scripts/smoke/eval_gate.py`.

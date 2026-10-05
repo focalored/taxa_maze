@@ -1,0 +1,16 @@
+defaults:
+  - model_checkpoint
+  - _self_
+
+# Every epoch is kept (Amendment 1 S27); the iNat21 checkpoint is picked afterwards from
+# decisions.json's integer counts, ties to the earlier epoch.
+model_checkpoint:
+  dirpath: ${paths.log_dir}/p1/${run_name}/checkpoints
+  filename: "epoch_{epoch:02d}"   # 0-based like Lightning (Amendment 2 A2.3); decisions.json names the same file
+  monitor: "val/tol/photo/species"
+  mode: "max"
+  save_top_k: -1
+  save_last: True
+  every_n_epochs: 1
+  save_on_train_epoch_end: True
+  auto_insert_metric_name: False

@@ -19,3 +19,13 @@ work_dir: ${hydra:runtime.cwd}
 
 # allocation
 allocation: bdbk-tgirails
+# ---- pilot 1 data and references (read-only unless noted) ----
+# Shared /projects allocation, read only (Amendment 1 P1).
+tol10m_dir: /u/liv/bdbk/data/tol10m
+inat21_dir: /u/liv/bdbk/data/inat21
+bioclip1_ckpt: /u/liv/bdbk/ckpt/bioclip1
+# tol_embed: read only the files spec line 14 names (caches, ZEROSHOT_RANKS JSONs).
+tol_embed_dir: /projects/bdbk/liv/repos/tol_embed
+# Written by pilot 1: image store, catalog table, dedup, fresh encodes. Must resolve outside
+# /projects/bdbk (Amendment 1 S1); src/utils/paths.py:assert_outside_projects checks this.
+p1_data_dir: /u/liv/data/taxa_maze

@@ -1,0 +1,15 @@
+defaults:
+  - default
+
+strategy:
+  _target_: src.utils.strategies.ManualSyncDDPStrategy
+accelerator: gpu
+devices: 2
+num_nodes: 1   # 1 node x 2 A100s, 4,096 images per GPU (Amendment 2 A2.1); 2 x 2 needs trainer.num_nodes=2 and sbatch --nodes=2
+precision: bf16-mixed
+max_epochs: 10
+log_every_n_steps: 1
+num_sanity_val_steps: 0
+limit_val_batches: 0
+use_distributed_sampler: false
+deterministic: false

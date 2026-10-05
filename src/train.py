@@ -1,4 +1,5 @@
-""""hydra entrypoint""""
+"""Hydra entrypoint."""
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
@@ -7,16 +8,21 @@ import rootutils
 import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-torch.set_float32_matmul_precision("medium")
-torch.backends.cuda.enable_flash_sdp(True)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
-torch.backends.cuda.enable_math_sdp(False)
+torch.set_float32_matmul_precision("highest")
+
+
+def _sci(x) -> str:
+    """Shortest scientific form of an LR for run names: 1e-4, 3e-4, 2.5e-4 (agent/USAGE.md, Run naming)."""
+    mant, exp = f"{float(x):.6e}".split("e")
+    return f"{mant.rstrip('0').rstrip('.')}e{int(exp)}"
+
+
+OmegaConf.register_new_resolver("sci", _sci, replace=True)
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.models.retrieval_module import _RetrievalBuffer
 from src.utils import (
     RankedLogger,
     extras,
@@ -68,6 +74,11 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             "train/val/test datamodules via the `@data.train` / `@data.val.<name>` / "
             "`@data.test.<name>` Hydra package syntax."
         )
+
+    if cfg.get("run_name") and cfg.get("train") and not cfg.get("ckpt_path"):
+        ckpt_dir = Path(cfg.paths.log_dir) / cfg.task_name / cfg.run_name / "checkpoints"
+        if ckpt_dir.exists() and any(ckpt_dir.iterdir()):
+            raise RuntimeError(f"{ckpt_dir} already holds checkpoints: resume with ckpt_path=... or bump version")
 
     log.info(f"Instantiating train datamodule <{cfg.data.train._target_}>")
     train_dm: LightningDataModule = hydra.utils.instantiate(cfg.data.train)
@@ -121,12 +132,15 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             f"Training on '{list({cfg.data.train._target_})}'; "
             f"val on {list(val_dms)}; test on {list(test_dms)}"
         )
-        trainer.fit(
-            model=model,
-            train_dataloaders=train_dm.train_dataloader(),
-            val_dataloaders=[dm.val_dataloader() for dm in val_dms.values()] or None,
-            ckpt_path=cfg.get("ckpt_path"),
-        )
+        if val_dms:
+            trainer.fit(
+                model=model,
+                train_dataloaders=train_dm.train_dataloader(),
+                val_dataloaders=[dm.val_dataloader() for dm in val_dms.values()],
+                ckpt_path=cfg.get("ckpt_path"),
+            )
+        else:  # pilot 1: the module reads its tree, refresh and ToL-val loaders from the datamodule
+            trainer.fit(model=model, datamodule=train_dm, ckpt_path=cfg.get("ckpt_path"))
 
     train_metrics = trainer.callback_metrics
 

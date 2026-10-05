@@ -13,3 +13,8 @@ Maintenance:
 - Refresh a topic when its question becomes load-bearing, not on a schedule. Retire superseded reviews to `agent_legacy/litreview/` with a note on what replaced them, and drop the index row.
 
 ##### MODIFY UNDER THIS LINE #####
+
+| slug | question it answers | last refresh | confidence |
+|---|---|---|---|
+| [`bfl-level-restricted-loss`](bfl-level-restricted-loss.md) | What exactly is the BFL ("Beyond Flat Labels", arXiv 2606.21838) level-restricted contrastive loss that arms (c)/(d) of `specs/pilot1.md` use, and its species-only "flat" variant for arms (a)/(b)? How were the released BFL checkpoints trained? | 2026-10-02 | High for the loss equations (verbatim v2 TeX). Medium for the recipe (paper and card disagree). Low for the prompt template and cross-GPU dedup (not stated in the paper). |
+| [`bioclip1-finetune-recipes`](bioclip1-finetune-recipes.md) | How were the published BioCLIP 1 fine-tunes trained (RCME, arXiv 2506.21476, as primary; BFL alongside), and what does that suggest for pilot 1's unnamed optimizer, betas and eps, LR decay shape and warmup fraction (`specs/pilot1.md` §6)? | 2026-10-02 | High for what RCME's paper (verbatim v1 TeX) and released code (commit `220487d`) say, and for the checkpoint facts measured here (BioCLIP 1 base, full fine-tune, frozen `logit_scale`). Low for which recipe actually trained the released RCME weights: the paper and code disagree, and the code does not run as committed and postdates the weights. Low also for which published Table 2 row the release is: its weights start from BioCLIP 1 (the paper's RCME^FT), but its harness accuracy matches the paper's "RCME" row. The pilot 1 suggestions are judgment calls for the user. |

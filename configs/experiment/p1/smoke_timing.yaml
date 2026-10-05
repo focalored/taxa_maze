@@ -1,0 +1,29 @@
+# @package _global_
+# Amendment 1 S29 timing and an end-to-end pass: 60 steps of arm (d) at lam = 1, then refresh, ToL-val and a checkpoint.
+# Usage: sbatch scripts/p1/train.sh experiment=p1/smoke_timing
+defaults:
+  - override /model: p1
+  - override /trainer: p1_ddp
+  - override /callbacks: p1
+  - override /logger: csv
+
+task_name: smoke_timing
+run_name: smoke_timing
+seed: 42
+tags: ["smoke", "timing"]
+model:
+  arm: d
+  lr: 1e-4
+  lam: 1.0
+  epochs: 10
+trainer:
+  max_epochs: 1
+  limit_train_batches: 60
+
+callbacks:
+  model_checkpoint:
+    dirpath: ${paths.output_dir}/checkpoints
+
+hydra:
+  run:
+    dir: ${paths.log_dir}/smoke/timing/${now:%Y-%m-%d_%H-%M-%S}_j${oc.env:SLURM_JOB_ID,local}

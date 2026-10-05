@@ -1,0 +1,20 @@
+# @package _global_
+# Pilot 1 arm (b): flat-pen. Usage: sbatch scripts/p1/train.sh experiment=p1/b_flat_pen model.lr=1e-4 model.lam=<from the control's decisions.json>
+defaults:
+  - override /model: p1
+  - override /trainer: p1_ddp
+  - override /callbacks: p1
+  - override /logger: wandb
+
+task_name: p1
+seed: 42
+version: 1
+tags: ["p1", "b", "flat-pen"]
+model:
+  arm: b
+  lam: ???   # required: 0.2 / mean r_t from the matching control (Amendment 1 S6)
+run_name: p1b_flat-pen_lr${sci:${model.lr}}_s${seed}_v${version}
+
+hydra:
+  run:
+    dir: ${paths.log_dir}/p1/${run_name}/${now:%Y-%m-%d_%H-%M-%S}_j${oc.env:SLURM_JOB_ID,local}

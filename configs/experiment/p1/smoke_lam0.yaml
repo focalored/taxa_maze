@@ -1,0 +1,29 @@
+# @package _global_
+# Amendment 1 S13: 100 deterministic steps, refresh and evaluation off. Usage: sbatch scripts/p1/train.sh experiment=p1/smoke_lam0 model.arm=d tag=d_lam0
+defaults:
+  - override /model: p1
+  - override /trainer: p1_ddp
+  - override /callbacks: none
+  - override /logger: csv
+
+task_name: smoke_lam0
+seed: 42
+tag: ???
+tags: ["smoke", "lam0"]
+model:
+  lr: 1e-4
+  lam: 0.0
+  epochs: 10            # the real schedule (65 warmup steps), not trainer.max_epochs
+  refresh: false
+  eval_init: false
+  eval_each_epoch: false
+  drift_floor_file: null  # S13 compares losses only
+trainer:
+  max_epochs: 1
+  limit_train_batches: 100
+  deterministic: warn   # torch.use_deterministic_algorithms(True, warn_only=True); CUBLAS_WORKSPACE_CONFIG=:4096:8
+  enable_checkpointing: false
+
+hydra:
+  run:
+    dir: ${paths.log_dir}/smoke/lam0/${tag}/${now:%Y-%m-%d_%H-%M-%S}_j${oc.env:SLURM_JOB_ID,local}
