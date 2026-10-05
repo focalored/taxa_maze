@@ -2,6 +2,7 @@
 
 Usage: `store = ImageStore(store_dir); x = to_model_input(torch.from_numpy(store.read_many(shards, rows)).cuda())`.
 """
+import os
 from pathlib import Path
 from typing import Dict
 
@@ -23,29 +24,43 @@ def to_model_input(u8: torch.Tensor) -> torch.Tensor:
 
 
 class ImageStore:
-    """Random access to stored crops by (shard, row). Memmaps open lazily, once per process."""
+    """Random access to stored crops by (shard, row) with os.pread, one descriptor per shard and process.
+
+    No memory maps: with every loader worker mapping the whole ~850 GB NFS store, workers stalled
+    in the kernel (audit/2026-10-05_lr3e-4_stall.md).
+    """
 
     def __init__(self, store_dir):
         self.dir = Path(store_dir)
-        self._mm: Dict[int, np.memmap] = {}
+        self._fd: Dict[int, int] = {}
 
-    def _shard(self, shard: int) -> np.memmap:
-        mm = self._mm.get(shard)
-        if mm is None:
-            path = self.dir / "shards" / f"image_set_{shard:02d}.u8"
-            n = path.stat().st_size // ROW_BYTES
-            mm = np.memmap(path, dtype=np.uint8, mode="r", shape=(n, CROP, CROP, 3))
-            self._mm[shard] = mm
-        return mm
+    def _open(self, shard: int) -> int:
+        fd = self._fd.get(shard)
+        if fd is None:
+            fd = os.open(self.dir / "shards" / f"image_set_{shard:02d}.u8", os.O_RDONLY)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_RANDOM)
+            self._fd[shard] = fd
+        return fd
+
+    def _read_into(self, shard: int, row: int, out: np.ndarray) -> None:
+        buf, fd, off, got = memoryview(out).cast("B"), self._open(shard), row * ROW_BYTES, 0
+        while got < ROW_BYTES:
+            n = os.preadv(fd, [buf[got:]], off + got)
+            if n == 0:
+                raise EOFError(f"store shard {shard} has no row {row}")
+            got += n
+        os.posix_fadvise(fd, off, ROW_BYTES, os.POSIX_FADV_DONTNEED)  # read once per epoch: keep it out of the page cache
 
     def read(self, shard: int, row: int) -> np.ndarray:
-        return np.asarray(self._shard(int(shard))[int(row)])
+        out = np.empty((CROP, CROP, 3), dtype=np.uint8)
+        self._read_into(int(shard), int(row), out)
+        return out
 
     def read_many(self, shards: np.ndarray, rows: np.ndarray) -> np.ndarray:
         out = np.empty((len(rows), CROP, CROP, 3), dtype=np.uint8)
-        for i, (s, r) in enumerate(zip(shards, rows)):
-            out[i] = self._shard(int(s))[int(r)]
+        for i in np.lexsort((rows, shards)):  # file order; each row lands at its own index
+            self._read_into(int(shards[i]), int(rows[i]), out[i])
         return out
 
-    def __getstate__(self):  # DataLoader workers reopen their own memmaps
-        return {"dir": self.dir, "_mm": {}}
+    def __getstate__(self):  # spawned workers open their own descriptors; forked ones may share (pread has no file position)
+        return {"dir": self.dir, "_fd": {}}
