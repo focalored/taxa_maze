@@ -28,7 +28,7 @@ Maintenance:
   - S32's floor has no margin, so a model within about 20 images of 70,186 can land on either side depending on the encode setting. Decided (Amendment 2 A2.4, 2026-10-05): the M3 eval records its setting, and all six baselines are re-evaluated under that same setting, so the floor and the comparison cells are same-setting integer counts.
 
 ## Idea → code (pilot 1, 2026-10-04)
-- Image store and decode chain: `scripts/store/build_store.py`, reader `src/data/tol_store.py` (uint8 crops; `to_model_input` = ToTensor + Normalize).
+- Image store and decode chain: `scripts/store/build_store.py`, reader `src/data/tol_store.py` (uint8 crops read with `os.pread`; `to_model_input` = ToTensor + Normalize).
 - Catalog, lineage drop, S9 list: `src/data/tol_catalog.py`. Train tree (species keys, ancestors, n_a, P_s, g_s, held-out 5%) and ToL-val candidates: `src/data/taxonomy.py`.
 - Species groups and batches of B images, the last one of an epoch short (one group per species per batch): `src/data/tol_sampler.py`; loaders: `src/data/tol_datamodule.py`.
 - LoRA on q,v rows of `in_proj_weight` through `parametrize`, logit_scale clamp: `src/models/bioclip_lora.py`.
