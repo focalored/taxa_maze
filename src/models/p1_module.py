@@ -50,7 +50,7 @@ class P1Module(L.LightningModule):
             raise ValueError("lam must be >= 0")
         model, _, tokenizer = load_bioclip1(ckpt_dir)
         add_qv_lora(model, r=lora_r, alpha=lora_alpha, seed=seed)
-        model.set_grad_checkpointing(True)  # 2,048 images per GPU fit only with it (preflight S18)
+        model.set_grad_checkpointing(True)  # all blocks: 4,096 images per GPU need it (Amendment 2 A2.1)
         self.model, self.tokenizer = model, tokenizer
         self.bank: Optional[Bank] = None
         self._pending: Optional[dict] = None

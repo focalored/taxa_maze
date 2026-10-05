@@ -50,3 +50,6 @@ test: True
 
 # seed for random number generators in pytorch, numpy and python.random
 seed: null
+
+# checkpoint to resume from, e.g. logs/p1/<run_name>/checkpoints/last.ckpt; null starts fresh
+ckpt_path: null

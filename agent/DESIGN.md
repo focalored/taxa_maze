@@ -19,7 +19,7 @@ Maintenance:
 ##### MODIFY UNDER THIS LINE #####
 
 ## Evaluation logic
-- **The bank monitor is ambiguous (spec line 181; Amendment 1, S24).** "Drop any terms where one of the nodes has a single child" can mean either node (the literal reading) or only the parent (the step is exactly zero only when the parent has a single child). "Averaged over each rank" can mean over species or over unique parent-child edges. From family to genus the two drop rules keep 96% or 54% of the 68,574 edges, so the choice moves the numbers a lot.
+- **The bank monitor is ambiguous (spec line 181; Amendment 1, S24).** "Drop any terms where one of the nodes has a single child" can mean either node (the literal reading) or only the parent (the step is exactly zero only when the parent has a single child). "Averaged over each rank" can mean over species or over unique parent-child edges. From family to genus the two drop rules keep about 96% or 54% of the edges (68,574 genera before S9; 67,859 after, where the parent rule keeps 95.8%), so the choice moves the numbers a lot.
   - Pilot 1 logs all four variants. The headline is the parent rule averaged over unique edges, chosen by the spec's owner.
   - These numbers deserve close scrutiny from the owner before anyone reads meaning into them.
   - No decision rule uses this monitor: not the LR sweep, not checkpoint selection, not the verdict.
@@ -30,7 +30,7 @@ Maintenance:
 ## Idea → code (pilot 1, 2026-10-04)
 - Image store and decode chain: `scripts/store/build_store.py`, reader `src/data/tol_store.py` (uint8 crops; `to_model_input` = ToTensor + Normalize).
 - Catalog, lineage drop, S9 list: `src/data/tol_catalog.py`. Train tree (species keys, ancestors, n_a, P_s, g_s, held-out 5%) and ToL-val candidates: `src/data/taxonomy.py`.
-- Species groups and batches of exactly B (one group per species per batch): `src/data/tol_sampler.py`; loaders: `src/data/tol_datamodule.py`.
+- Species groups and batches of B images, the last one of an epoch short (one group per species per batch): `src/data/tol_sampler.py`; loaders: `src/data/tol_datamodule.py`.
 - LoRA on q,v rows of `in_proj_weight` through `parametrize`, logit_scale clamp: `src/models/bioclip_lora.py`.
 - fp64 bank (EMA, ancestors, root, refresh, zero-sum check, bank monitor, L*, drift): `src/models/bank.py`.
 - BFL and flat contrastive losses in distributed form, group means, penalty with 1/g_s: `src/models/losses.py`.
