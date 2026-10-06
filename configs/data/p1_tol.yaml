@@ -3,6 +3,7 @@ data_dir: ${paths.p1_data_dir}
 s9_drop: true          # Amendment 1 S9 flag; logged in run_info.json
 K: 16                  # Amendment 1 S2
 B: 8192                # global batch (Amendment 1 S8); 4,096 per GPU on 1 node x 2 GPUs (Amendment 2 A2.1)
+sampler: grouped       # grouped = the spec's species-grouped batches (S3, S7); random = diagnostic uniform batches (ask A14)
 seed: ${seed}
 num_workers: 8
 chunk: 1024

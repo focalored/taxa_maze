@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.data.taxonomy import build_train_tree, build_val_set, save_stats
-from src.data.tol_sampler import make_epoch_plan
+from src.data.tol_sampler import make_epoch_plan, make_random_epoch_plan
 from src.data.tol_store import ImageStore
 from src.utils.paths import assert_outside_projects
 
@@ -28,8 +28,9 @@ def _read_sorted(store: ImageStore, shards: np.ndarray, rows: np.ndarray) -> np.
 class PlanDataset(Dataset):
     """Item t = this rank's micro-batch at step t of the current epoch's plan."""
 
-    def __init__(self, tree, store: ImageStore, K: int, B: int, world: int, rank: int, seed: int):
-        self.tree, self.store, self.K, self.B = tree, store, K, B
+    def __init__(self, tree, store: ImageStore, K: int, B: int, world: int, rank: int, seed: int,
+                 sampler: str = "grouped"):
+        self.tree, self.store, self.K, self.B, self.sampler = tree, store, K, B, sampler
         self.world, self.rank, self.seed = world, rank, seed
         T = int(tree.N_s.sum())
         self.n_steps = T // B + (T % B > 0)
@@ -38,8 +39,11 @@ class PlanDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         if self.epoch != epoch:
-            self.plan = make_epoch_plan(self.tree.sp_start, self.tree.N_s, self.K, self.B,
-                                        self.world, self.seed, epoch)
+            if self.sampler == "random":  # diagnostic only (ask A14); the spec's batches are the grouped plan
+                self.plan = make_random_epoch_plan(self.tree.sp_start, self.tree.N_s, self.B, self.world, self.seed, epoch)
+            else:
+                self.plan = make_epoch_plan(self.tree.sp_start, self.tree.N_s, self.K, self.B,
+                                            self.world, self.seed, epoch)
             self.epoch = epoch
 
     def __len__(self):
@@ -88,11 +92,13 @@ class ChunkDataset(Dataset):
 class P1TolDataModule(L.LightningDataModule):
     def __init__(self, data_dir: str, s9_drop: bool = True, K: int = 16, B: int = 8192, seed: int = 42,
                  num_workers: int = 8, chunk: int = 1024, dedup_file: Optional[str] = None,
-                 heldout_file: Optional[str] = None):
+                 heldout_file: Optional[str] = None, sampler: str = "grouped"):
         super().__init__()
+        if sampler not in ("grouped", "random"):
+            raise ValueError(f"sampler must be 'grouped' (the spec's batches) or 'random' (diagnostic), got {sampler!r}")
         self.data_dir = Path(data_dir)
         self.store_dir = self.data_dir / "store"
-        self.s9_drop, self.K, self.B, self.seed = s9_drop, K, B, seed
+        self.s9_drop, self.K, self.B, self.seed, self.sampler = s9_drop, K, B, seed, sampler
         self.num_workers, self.chunk = num_workers, chunk
         self.dedup_file = Path(dedup_file) if dedup_file else None
         self.heldout_file = Path(heldout_file) if heldout_file else None
@@ -128,7 +134,7 @@ class P1TolDataModule(L.LightningDataModule):
         rank, world = self._rank_world()
         if self.target_world_size is not None and world != self.target_world_size and world != 1:
             raise RuntimeError(f"world {world} != planned {self.target_world_size}")
-        ds = PlanDataset(self.tree, self.store, self.K, self.B, world, rank, self.seed)
+        ds = PlanDataset(self.tree, self.store, self.K, self.B, world, rank, self.seed, self.sampler)
         return DataLoader(ds, batch_size=None, sampler=PlanSampler(ds), num_workers=self.num_workers,
                           pin_memory=True, persistent_workers=False, prefetch_factor=2 if self.num_workers else None)
 

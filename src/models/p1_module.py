@@ -92,7 +92,7 @@ class P1Module(L.LightningModule):
             self.run_dir.mkdir(parents=True, exist_ok=True)
             dm.write_stats(self.run_dir)
             info = {"arm": self.hparams.arm, "loss": self.loss_kind, "penalized": self.penalized,
-                    "lam": self.hparams.lam, "lr": self.hparams.lr, "s9_drop": dm.s9_drop, "K": dm.K, "B": dm.B,
+                    "lam": self.hparams.lam, "lr": self.hparams.lr, "s9_drop": dm.s9_drop, "K": dm.K, "B": dm.B, "sampler": dm.sampler,
                     "world": self.W, "steps_per_epoch": n_steps, "total_steps": self.total_steps,
                     "warmup_steps": self.warmup, "penalty_weighting": self.hparams.penalty_weighting,
                     "params": param_counts(self.model)}

@@ -1,6 +1,6 @@
-"""Epoch batch plan: species groups of at most K images packed into batches of exactly B, at most one group per species per batch (preflight reading S7; Amendment 1 S3).
+"""Epoch batch plan: species groups of at most K images packed into batches of exactly B, at most one group per species per batch (preflight reading S7; Amendment 1 S3); plus a random-batch variant for diagnostics.
 
-Usage: `plan = make_epoch_plan(tree.sp_start, tree.N_s, K=16, B=8192, world=4, seed=42, epoch=e)`; `plan.steps[t][rank]` is (image_idx, group_species, group_sizes).
+Usage: `plan = make_epoch_plan(tree.sp_start, tree.N_s, K=16, B=8192, world=4, seed=42, epoch=e)`; `plan.steps[t][rank]` is (image_idx, group_species, group_sizes). `make_random_epoch_plan(tree.sp_start, tree.N_s, B=8192, world=2, seed=42, epoch=e)` has the same output format.
 """
 from dataclasses import dataclass
 from typing import List
@@ -89,6 +89,48 @@ def make_epoch_plan(sp_start: np.ndarray, N_s: np.ndarray, K: int, B: int, world
             gis = np.array(bins[b][r], dtype=np.int64)
             idx = np.concatenate([perm[grp_off[i]: grp_off[i] + grp_size[i]] for i in gis]) if len(gis) else np.zeros(0, np.int64)
             ranks.append((idx, grp_species[gis].astype(np.int64), grp_size[gis].astype(np.int64)))
+        steps.append(ranks)
+    plan = EpochPlan(epoch=epoch, world=world, steps=steps)
+    check_plan(plan, N_s, B, sp_start)
+    return plan
+
+
+def make_random_epoch_plan(sp_start: np.ndarray, N_s: np.ndarray, B: int, world: int, seed: int, epoch: int) -> EpochPlan:
+    """Diagnostic plan, not the spec's batches (ask A14, 2026-10-05): a uniformly random partition of the epoch's images into
+    batches of exactly B; the images of one species that land in the same batch form its one group there, so S3 still holds
+    and the losses see the usual group structure. Usage: `make_random_epoch_plan(tree.sp_start, tree.N_s, 8192, 2, 42, e)`.
+    """
+    if B % world:
+        raise ValueError(f"B={B} is not divisible by world={world}")
+    rng = np.random.default_rng([seed, epoch])
+    S, T = len(N_s), int(N_s.sum())
+    img_species = np.repeat(np.arange(S), N_s)
+    perm = rng.permutation(T)
+    n_full, rem = T // B, T % B
+    steps = []
+    for b in range(n_full + (rem > 0)):
+        idx = np.sort(perm[b * B: (b + 1) * B])  # ascending index = species-major, so each species' images are contiguous
+        gsp, first, gsz = np.unique(img_species[idx], return_index=True, return_counts=True)
+        n = len(idx)
+        free = n // world + (np.arange(world) < n % world)
+        bins = [[] for _ in range(world)]
+        multi, single = np.flatnonzero(gsz > 1), np.flatnonzero(gsz == 1)
+        for gi in multi[np.lexsort((rng.random(len(multi)), -gsz[multi]))]:  # largest first, to the rank with most room
+            r = int(np.argmax(free))
+            if free[r] < gsz[gi]:
+                raise RuntimeError(f"random plan: batch {b}, group of {int(gsz[gi])} fits no rank")
+            bins[r].append(int(gi))
+            free[r] -= gsz[gi]
+        if len(single) != int(free.sum()):
+            raise RuntimeError(f"random plan: batch {b}, {len(single)} single images for {int(free.sum())} slots")
+        rng.shuffle(single)  # singletons fill the remaining slots exactly
+        for r, chunk in enumerate(np.split(single, np.cumsum(free)[:-1])):
+            bins[r].extend(chunk.tolist())
+        ranks = []
+        for r in range(world):
+            gis = np.array(bins[r], dtype=np.int64)
+            ridx = np.concatenate([idx[first[i]: first[i] + gsz[i]] for i in gis]) if len(gis) else np.zeros(0, np.int64)
+            ranks.append((ridx, gsp[gis].astype(np.int64), gsz[gis].astype(np.int64)))
         steps.append(ranks)
     plan = EpochPlan(epoch=epoch, world=world, steps=steps)
     check_plan(plan, N_s, B, sp_start)
