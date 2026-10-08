@@ -2,7 +2,7 @@
 
 Usage: `bfl_level_loss_local(...)` per level on each rank (rank parts sum to the global loss); `penalty_local(mu_hat, sids, bank, ...)`.
 """
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
@@ -82,6 +82,28 @@ def bfl_level_loss_local(v_local: torch.Tensor, v_all: torch.Tensor, z_all: torc
         t2i = logits_i2t.new_zeros(())
         floor = logits_i2t.new_zeros(())
     return {"i2t": i2t, "t2i": t2i, "t2i_floor": floor}
+
+
+def level_weights(resid: torch.Tensor, scheme: str, tau: float = 1.0, ref: Optional[torch.Tensor] = None,
+                  grad_norms: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Per-level weights with mean 1 for the level-restricted loss (A15 second-phase probes; line 178 is the uniform mean).
+    resid: the global per-level loss above its floor, detached. lse: n * softmax(resid / tau), TaxaWalk's tilted mean, whose
+    gradient weights the level with the larger loss more. ratio: resid / ref, each level's loss relative to its own start,
+    normalized; ones until ref exists. gradnorm: proportional to 1 / grad_norms, so every level's gradient on the image
+    embeddings has the same norm. Usage: `w = level_weights(resid, "lse", tau=1.0)`.
+    """
+    n = resid.shape[0]
+    if scheme == "lse":
+        return torch.softmax(resid / tau, 0) * n
+    if scheme == "ratio":
+        if ref is None:
+            return torch.ones_like(resid)
+        r = resid / ref
+        return r / r.mean()
+    if scheme == "gradnorm":
+        inv = 1.0 / grad_norms.clamp_min(1e-12)
+        return inv / inv.mean()
+    raise ValueError(f"unknown level weighting {scheme!r}")
 
 
 def group_means(v32: torch.Tensor, grp_sizes: torch.Tensor) -> torch.Tensor:

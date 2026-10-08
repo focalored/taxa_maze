@@ -20,7 +20,7 @@ from src.eval.zeroshot import class_text
 from src.models.bank import Bank, species_means_pass
 from src.models.bioclip_lora import (add_qv_lora, clamp_logit_scale, load_bioclip1, param_counts,
                                      trainable_parameters)
-from src.models.losses import (all_reduce_sum, bfl_level_loss_local, gather_nograd, gather_varlen_nograd,
+from src.models.losses import (level_weights, all_reduce_sum, bfl_level_loss_local, gather_nograd, gather_varlen_nograd,
                                gather_with_grad, group_means, level_label_plan, penalty_local, world_info)
 
 ARMS = {"a": ("flat", False), "b": ("flat", True), "c": ("lvl", False), "d": ("lvl", True)}
@@ -35,6 +35,7 @@ class P1Module(L.LightningModule):
                  lora_r: int = 16, lora_alpha: float = 32.0, lora_towers: str = "both", seed: int = 42, epochs: int = 10,
                  warmup_frac: float = 0.01, betas=(0.9, 0.98), eps: float = 1e-6, weight_decay: float = 0.0,
                  grad_clip: float = 1.0, penalty_weighting: str = "inv_groups", monitor_window=(50, 250),
+                 level_weighting: str = "uniform", lse_tau: float = 1.0, ratio_ref_steps: int = 50,
                  monitor_every: int = 50, refresh: bool = True, eval_init: bool = True,
                  eval_each_epoch: bool = True, eval_forms=("photo", "lineage"),
                  drift_floor_file: Optional[str] = None, check_zero_sum: bool = True):
@@ -48,6 +49,10 @@ class P1Module(L.LightningModule):
             raise ValueError("control arms keep the penalty out of their loss (Amendment 1 S15): lam must be 0")
         if lam < 0:
             raise ValueError("lam must be >= 0")
+        if level_weighting not in ("uniform", "lse", "ratio", "gradnorm"):
+            raise ValueError(f"level_weighting must be uniform, lse, ratio or gradnorm, got {level_weighting!r}")
+        self.level_ref: Optional[torch.Tensor] = None   # ratio scheme: each level's starting loss (steps 0..ratio_ref_steps-1)
+        self._ref_acc: List[torch.Tensor] = []
         model, _, tokenizer = load_bioclip1(ckpt_dir)
         add_qv_lora(model, r=lora_r, alpha=lora_alpha, seed=seed, towers=lora_towers)
         model.set_grad_checkpointing(True)  # all blocks: 4,096 images per GPU need it (Amendment 2 A2.1)
@@ -71,6 +76,8 @@ class P1Module(L.LightningModule):
             self.bank.load_state_dict(self._pending["bank"])
             self.r_t = {int(k): v for k, v in self._pending["r_t"].items()}
             self.decisions = self._pending["decisions"]
+            if "level_ref" in self.decisions:
+                self.level_ref = torch.tensor(list(self.decisions["level_ref"].values()), dtype=torch.float64, device=dev)
         else:
             seed = np.load(self.hparams.bank_seed_file, mmap_mode="r")
             meta = json.loads(Path(self.hparams.bank_seed_file).with_suffix(".json").read_text())
@@ -93,7 +100,8 @@ class P1Module(L.LightningModule):
             dm.write_stats(self.run_dir)
             info = {"arm": self.hparams.arm, "loss": self.loss_kind, "penalized": self.penalized,
                     "lam": self.hparams.lam, "lr": self.hparams.lr, "s9_drop": dm.s9_drop, "K": dm.K, "B": dm.B, "sampler": dm.sampler,
-                    "lora_towers": self.hparams.lora_towers,
+                    "lora_towers": self.hparams.lora_towers, "level_weighting": self.hparams.level_weighting,
+                    "lse_tau": self.hparams.lse_tau, "ratio_ref_steps": self.hparams.ratio_ref_steps,
                     "world": self.W, "steps_per_epoch": n_steps, "total_steps": self.total_steps,
                     "warmup_steps": self.warmup, "penalty_weighting": self.hparams.penalty_weighting,
                     "params": param_counts(self.model)}
@@ -206,13 +214,44 @@ class P1Module(L.LightningModule):
         levels = list(range(7)) if self.loss_kind == "lvl" else [6]
         con = self._contrastive(v32, v_all, sp_all, off, n_loc, levels, grad=True)
         with _no_autocast():
-            L_con = torch.stack([con[d]["i2t"] + con[d]["t2i"] for d in levels]).mean()
+            L_con, w, extra = self._combine_levels(con, levels, v32)
             with torch.set_grad_enabled(pen_grad):
                 mu_hat = group_means(v32 if pen_grad else v32.detach(), gsz)
                 pen = penalty_local(mu_hat, gsp, self.bank, self.t_P, self.t_held, self.t_g, n_loc,
                                     self.hparams.penalty_weighting)
         return {"L_con": L_con, "pen": pen, "con": con, "levels": levels, "mu_hat": mu_hat, "feats": feats,
-                "v_all": v_all, "sizes": sizes, "sp_all": sp_all, "off": off, "n_loc": n_loc}
+                "v_all": v_all, "sizes": sizes, "sp_all": sp_all, "off": off, "n_loc": n_loc, "w": w, "extra": extra}
+
+    def _combine_levels(self, con, levels, v32):
+        """The contrastive loss over levels: the plain mean (line 178), or a weighted mean whose weights every rank computes
+        from the same detached global quantities, so that the sum over ranks of the local weighted losses has the gradient
+        of the global weighted objective. Returns (loss, weights or None, extra logs)."""
+        L = torch.stack([con[d]["i2t"] + con[d]["t2i"] for d in levels])
+        scheme = self.hparams.level_weighting
+        if scheme == "uniform" or len(levels) == 1:
+            return L.mean(), None, {}
+        n = len(levels)
+        floor = torch.stack([con[d]["t2i_floor"] for d in levels]).detach()
+        resid_g = all_reduce_sum((L.detach() - floor).double())               # global loss above its floor, per level
+        extra, g = {}, None
+        if scheme == "lse":
+            tau = float(self.hparams.lse_tau)
+            extra["loss/con_lse"] = float(tau * (torch.logsumexp(resid_g / tau, 0) - math.log(n)))
+        elif scheme == "ratio":
+            if self.level_ref is None:
+                self._ref_acc.append(resid_g)
+                if len(self._ref_acc) >= int(self.hparams.ratio_ref_steps):
+                    self.level_ref = torch.stack(self._ref_acc).mean(0)
+                    self.decisions["level_ref"] = {RANKS[d]: float(self.level_ref[j]) for j, d in enumerate(levels)}
+                    self._ref_acc = []
+        elif scheme == "gradnorm":  # each level's gradient norm on this batch's image embeddings, over the global batch
+            g2 = torch.stack([(torch.autograd.grad(L[j], v32, retain_graph=True)[0] ** 2).sum() for j in range(n)])
+            g = all_reduce_sum(g2.double()).sqrt()
+            for j, d in enumerate(levels):
+                extra[f"con/gradnorm/{RANKS[d]}"] = float(g[j])
+        w = level_weights(resid_g, scheme, float(self.hparams.lse_tau), self.level_ref, g)
+        extra["loss/con_uniform"] = float(all_reduce_sum(L.detach().double()).mean())
+        return (w.to(L.dtype) * L).mean(), w, extra
 
     def separate_grads(self, out: Dict) -> Dict[str, torch.Tensor]:
         """S16: each loss's gradient from its own backward pass on the same forward, averaged over ranks by hand."""
@@ -280,6 +319,10 @@ class P1Module(L.LightningModule):
         for j, d in enumerate(levels):
             logs[f"con/{RANKS[d]}/i2t"], logs[f"con/{RANKS[d]}/t2i"], logs[f"con/{RANKS[d]}/t2i_floor"] = (
                 float(red[1 + 3 * j]), float(red[2 + 3 * j]), float(red[3 + 3 * j]))
+        if out["w"] is not None:
+            logs.update(out["extra"])
+            for j, d in enumerate(levels):
+                logs[f"con/weight/{RANKS[d]}"] = float(out["w"][j])
         for d in range(6):
             logs[f"pen/{RANKS[d]}/term"] = float(pen_red[1 + d]) / self.W
             n_valid = float(pen_red[13 + d])
