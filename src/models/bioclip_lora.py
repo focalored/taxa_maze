@@ -67,10 +67,16 @@ def attention_modules(model) -> List[Tuple[str, nn.MultiheadAttention]]:
     return mods
 
 
-def add_qv_lora(model, r: int = 16, alpha: float = 32.0, seed: int = 42) -> None:
-    """Attach the adapters to all 24 blocks and make logit_scale trainable."""
+def add_qv_lora(model, r: int = 16, alpha: float = 32.0, seed: int = 42, towers: str = "both") -> None:
+    """Attach the adapters to all 24 blocks (towers="both", spec lines 61 and 154) or to the 12 image blocks only
+    (towers="image", a second-phase probe under Amendment 3), and make logit_scale trainable.
+    Usage: `add_qv_lora(model, r=16, alpha=32.0, seed=42, towers="image")`."""
+    if towers not in ("both", "image"):
+        raise ValueError(f"towers must be 'both' or 'image', got {towers!r}")
     g = torch.Generator().manual_seed(seed)
     for name, mha in attention_modules(model):
+        if towers == "image" and not name.startswith("visual."):
+            continue
         if not mha._qkv_same_embed_dim:
             raise RuntimeError(f"{name}: q, k, v are not packed into in_proj_weight")
         d = mha.embed_dim

@@ -32,7 +32,7 @@ def _no_autocast():
 
 class P1Module(L.LightningModule):
     def __init__(self, arm: str, lr: float, ckpt_dir: str, bank_seed_file: str, lam: float = 0.0,
-                 lora_r: int = 16, lora_alpha: float = 32.0, seed: int = 42, epochs: int = 10,
+                 lora_r: int = 16, lora_alpha: float = 32.0, lora_towers: str = "both", seed: int = 42, epochs: int = 10,
                  warmup_frac: float = 0.01, betas=(0.9, 0.98), eps: float = 1e-6, weight_decay: float = 0.0,
                  grad_clip: float = 1.0, penalty_weighting: str = "inv_groups", monitor_window=(50, 250),
                  monitor_every: int = 50, refresh: bool = True, eval_init: bool = True,
@@ -49,7 +49,7 @@ class P1Module(L.LightningModule):
         if lam < 0:
             raise ValueError("lam must be >= 0")
         model, _, tokenizer = load_bioclip1(ckpt_dir)
-        add_qv_lora(model, r=lora_r, alpha=lora_alpha, seed=seed)
+        add_qv_lora(model, r=lora_r, alpha=lora_alpha, seed=seed, towers=lora_towers)
         model.set_grad_checkpointing(True)  # all blocks: 4,096 images per GPU need it (Amendment 2 A2.1)
         self.model, self.tokenizer = model, tokenizer
         self.bank: Optional[Bank] = None
@@ -93,6 +93,7 @@ class P1Module(L.LightningModule):
             dm.write_stats(self.run_dir)
             info = {"arm": self.hparams.arm, "loss": self.loss_kind, "penalized": self.penalized,
                     "lam": self.hparams.lam, "lr": self.hparams.lr, "s9_drop": dm.s9_drop, "K": dm.K, "B": dm.B, "sampler": dm.sampler,
+                    "lora_towers": self.hparams.lora_towers,
                     "world": self.W, "steps_per_epoch": n_steps, "total_steps": self.total_steps,
                     "warmup_steps": self.warmup, "penalty_weighting": self.hparams.penalty_weighting,
                     "params": param_counts(self.model)}
