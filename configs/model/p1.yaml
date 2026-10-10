@@ -8,7 +8,7 @@ drift_floor_file: ${paths.p1_data_dir}/p1/drift_floor.json
 lora_r: 16
 lora_alpha: 32.0
 lora_towers: both      # both = spec lines 61, 154; image = image-side LoRA only (A15 probe, Amendment 3)
-level_weighting: uniform   # line 178's mean over the seven levels; lse | ratio | gradnorm are A15 second-phase probes (Amendment 3)
+level_weighting: uniform   # line 96's mean over the seven levels (BFL Eq. 3); lse | ratio | gradnorm are A15 second-phase probes (Amendment 3)
 lse_tau: 1.0           # lse: temperature in nats of the loss above its floor (TaxaWalk uses 0.1 on squared distances of unit vectors)
 ratio_ref_steps: 50    # ratio: each level's reference is its mean loss above the floor over the first 50 steps
 seed: ${seed}

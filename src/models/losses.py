@@ -86,7 +86,7 @@ def bfl_level_loss_local(v_local: torch.Tensor, v_all: torch.Tensor, z_all: torc
 
 def level_weights(resid: torch.Tensor, scheme: str, tau: float = 1.0, ref: Optional[torch.Tensor] = None,
                   grad_norms: Optional[torch.Tensor] = None) -> torch.Tensor:
-    """Per-level weights with mean 1 for the level-restricted loss (A15 second-phase probes; line 178 is the uniform mean).
+    """Per-level weights with mean 1 for the level-restricted loss (A15 second-phase probes; line 96 is the uniform mean).
     resid: the global per-level loss above its floor, detached. lse: n * softmax(resid / tau), TaxaWalk's tilted mean, whose
     gradient weights the level with the larger loss more. ratio: resid / ref, each level's loss relative to its own start,
     normalized; ones until ref exists. gradnorm: proportional to 1 / grad_norms, so every level's gradient on the image

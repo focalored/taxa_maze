@@ -223,7 +223,7 @@ class P1Module(L.LightningModule):
                 "v_all": v_all, "sizes": sizes, "sp_all": sp_all, "off": off, "n_loc": n_loc, "w": w, "extra": extra}
 
     def _combine_levels(self, con, levels, v32):
-        """The contrastive loss over levels: the plain mean (line 178), or a weighted mean whose weights every rank computes
+        """The contrastive loss over levels: the plain mean (line 96, BFL Eq. 3), or a weighted mean whose weights every rank computes
         from the same detached global quantities, so that the sum over ranks of the local weighted losses has the gradient
         of the global weighted objective. Returns (loss, weights or None, extra logs)."""
         L = torch.stack([con[d]["i2t"] + con[d]["t2i"] for d in levels])

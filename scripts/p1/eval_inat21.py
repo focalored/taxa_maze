@@ -118,11 +118,20 @@ def evaluate(model, preprocess, tokenizer, device, workers, make_dataset, labels
     return res, {"n_images": int(img.shape[0]), "encode_s": round(t_enc, 1), "eval_s": round(time.time() - t0, 1)}
 
 
+def _open_clip_version():
+    try:
+        import src.open_clip as oc
+        return getattr(oc, "__version__", None) or str(Path(oc.__file__).parent)
+    except Exception:
+        return None
+
+
 def setting(workers, labels_dir):
     return {"batch": BATCH, "autocast": "float16", "weights": "float32", "cudnn.deterministic": torch.backends.cudnn.deterministic,
             "cudnn.benchmark": torch.backends.cudnn.benchmark, "cuda.matmul.allow_tf32": torch.backends.cuda.matmul.allow_tf32,
             "fp32_matmul_precision": torch.get_float32_matmul_precision(), "loader_workers": workers,
-            "torch": torch.__version__, "gpu": torch.cuda.get_device_name(0), "host": socket.gethostname(),
+            "torch": torch.__version__, "cudnn": torch.backends.cudnn.version(), "numpy": np.__version__, "open_clip": _open_clip_version(),
+            "gpu": torch.cuda.get_device_name(0), "host": socket.gethostname(),
             "slurm_job_id": os.environ.get("SLURM_JOB_ID"), "ids_order": str(Path(labels_dir) / "ids.txt")}
 
 
