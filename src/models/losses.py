@@ -106,6 +106,33 @@ def level_weights(resid: torch.Tensor, scheme: str, tau: float = 1.0, ref: Optio
     raise ValueError(f"unknown level weighting {scheme!r}")
 
 
+def schedule_levels(loss_kind: str, schedule: str, epoch: int, coarse_epochs: int) -> List[int]:
+    """Which contrastive levels a step trains (M3 two-stage schedule, Amendment 4 draft). "none": arm (c) trains all seven levels,
+    arm (a) species only (line 96). "switch": arm (c) trains all seven levels for the first `coarse_epochs` epochs (0-based epochs
+    0..coarse_epochs-1), then species only, which is arm (a)'s objective from that epoch on. "decay" keeps all seven levels; its
+    weights come from decay_weights. Usage: `levels = schedule_levels("lvl", "switch", epoch=1, coarse_epochs=1)` -> [6].
+    """
+    if schedule not in ("none", "switch", "decay"):
+        raise ValueError(f"level_schedule must be none, switch or decay, got {schedule!r}")
+    if loss_kind != "lvl":
+        return [6]
+    if schedule == "switch" and epoch >= coarse_epochs:
+        return [6]
+    return list(range(7))
+
+
+def decay_weights(step: int, horizon: int, n_levels: int = 7) -> torch.Tensor:
+    """Weights for the "decay" schedule: species keeps weight 1, every coarser level's weight falls linearly from 1 at step 0 to 0 at
+    `horizon` (= coarse_epochs * steps per epoch) and stays 0. The loss is the weighted mean sum(w * L) / sum(w): the plain mean of
+    line 96 at step 0, arm (a)'s species-only loss from `horizon` on. Usage: `w = decay_weights(t, 647, 7)` (float64, shape [7]).
+    """
+    if horizon <= 0:
+        raise ValueError("horizon must be positive")
+    w = torch.ones(n_levels, dtype=torch.float64)
+    w[:-1] = max(0.0, 1.0 - step / horizon)
+    return w
+
+
 def group_means(v32: torch.Tensor, grp_sizes: torch.Tensor) -> torch.Tensor:
     """muhat per group (groups contiguous in v32), as a one-hot fp32 matrix product (deterministic)."""
     n_g = len(grp_sizes)

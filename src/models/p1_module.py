@@ -21,7 +21,8 @@ from src.models.bank import Bank, species_means_pass
 from src.models.bioclip_lora import (add_qv_lora, clamp_logit_scale, load_bioclip1, param_counts,
                                      trainable_parameters)
 from src.models.losses import (level_weights, all_reduce_sum, bfl_level_loss_local, gather_nograd, gather_varlen_nograd,
-                               gather_with_grad, group_means, level_label_plan, penalty_local, world_info)
+                               gather_with_grad, group_means, level_label_plan, penalty_local, world_info,
+                               schedule_levels, decay_weights)
 
 ARMS = {"a": ("flat", False), "b": ("flat", True), "c": ("lvl", False), "d": ("lvl", True)}
 
@@ -36,6 +37,7 @@ class P1Module(L.LightningModule):
                  warmup_frac: float = 0.01, betas=(0.9, 0.98), eps: float = 1e-6, weight_decay: float = 0.0,
                  grad_clip: float = 1.0, penalty_weighting: str = "inv_groups", monitor_window=(50, 250),
                  level_weighting: str = "uniform", lse_tau: float = 1.0, ratio_ref_steps: int = 50,
+                 level_schedule: str = "none", coarse_epochs: int = 1, train_text_form: str = "photo",
                  monitor_every: int = 50, refresh: bool = True, eval_init: bool = True,
                  eval_each_epoch: bool = True, eval_forms=("photo", "lineage"),
                  drift_floor_file: Optional[str] = None, check_zero_sum: bool = True):
@@ -51,6 +53,14 @@ class P1Module(L.LightningModule):
             raise ValueError("lam must be >= 0")
         if level_weighting not in ("uniform", "lse", "ratio", "gradnorm"):
             raise ValueError(f"level_weighting must be uniform, lse, ratio or gradnorm, got {level_weighting!r}")
+        if level_schedule not in ("none", "switch", "decay"):
+            raise ValueError(f"level_schedule must be none, switch or decay, got {level_schedule!r}")
+        if level_schedule != "none" and level_weighting != "uniform":
+            raise ValueError("one knob per run: level_schedule needs level_weighting=uniform")
+        if level_schedule != "none" and int(coarse_epochs) < 0:
+            raise ValueError("coarse_epochs must be >= 0")
+        if train_text_form not in ("photo", "lineage"):
+            raise ValueError(f"train_text_form must be photo (line 51(a)) or lineage, got {train_text_form!r}")
         self.level_ref: Optional[torch.Tensor] = None   # ratio scheme: each level's starting loss (steps 0..ratio_ref_steps-1)
         self._ref_acc: List[torch.Tensor] = []
         model, _, tokenizer = load_bioclip1(ckpt_dir)
@@ -88,6 +98,7 @@ class P1Module(L.LightningModule):
         if self.hparams.epochs != 10:
             raise ValueError("line 161 and S5: the schedule counts 10 epochs in every run, including the sweep")
         self.total_steps = self.hparams.epochs * n_steps
+        self.steps_per_epoch = n_steps
         self.warmup = math.ceil(self.hparams.warmup_frac * self.total_steps)
         if dm.s9_drop and dm.K == 16 and dm.B == 8192 and (n_steps, self.warmup) != (647, 65):
             raise RuntimeError(f"{n_steps} steps per epoch and {self.warmup} warmup steps; Amendment 1 S9 says 647 and 65")
@@ -102,6 +113,8 @@ class P1Module(L.LightningModule):
                     "lam": self.hparams.lam, "lr": self.hparams.lr, "s9_drop": dm.s9_drop, "K": dm.K, "B": dm.B, "sampler": dm.sampler,
                     "lora_towers": self.hparams.lora_towers, "level_weighting": self.hparams.level_weighting,
                     "lse_tau": self.hparams.lse_tau, "ratio_ref_steps": self.hparams.ratio_ref_steps,
+                    "level_schedule": self.hparams.level_schedule, "coarse_epochs": int(self.hparams.coarse_epochs),
+                    "train_text_form": self.hparams.train_text_form,
                     "world": self.W, "steps_per_epoch": n_steps, "total_steps": self.total_steps,
                     "warmup_steps": self.warmup, "penalty_weighting": self.hparams.penalty_weighting,
                     "params": param_counts(self.model)}
@@ -162,7 +175,8 @@ class P1Module(L.LightningModule):
             ids = sp_all if d == 6 else self.t_anc[sp_all, d]
             uniq, inv, shares = level_label_plan(ids, W)
             a, b = shares[R]
-            strings += [class_text(self.tree.node_keys[d][i].split("|"), "photo") for i in uniq[a:b].tolist()]
+            strings += [class_text(self.tree.node_keys[d][i].split("|"), self.hparams.train_text_form)
+                        for i in uniq[a:b].tolist()]
             plans.append((d, uniq, inv, shares))
         with torch.set_grad_enabled(grad):
             if strings:
@@ -211,7 +225,8 @@ class P1Module(L.LightningModule):
             off = sum(sizes[:R])
             sp_all = gather_varlen_nograd(self.t_img_species[img])
             v_all = self._gather_rows_with_grad(v32, sizes)
-        levels = list(range(7)) if self.loss_kind == "lvl" else [6]
+        levels = schedule_levels(self.loss_kind, self.hparams.level_schedule, int(self.current_epoch),
+                                 int(self.hparams.coarse_epochs))
         con = self._contrastive(v32, v_all, sp_all, off, n_loc, levels, grad=True)
         with _no_autocast():
             L_con, w, extra = self._combine_levels(con, levels, v32)
@@ -228,6 +243,10 @@ class P1Module(L.LightningModule):
         of the global weighted objective. Returns (loss, weights or None, extra logs)."""
         L = torch.stack([con[d]["i2t"] + con[d]["t2i"] for d in levels])
         scheme = self.hparams.level_weighting
+        if self.hparams.level_schedule == "decay" and len(levels) > 1:   # M3 two-stage schedule, decaying form
+            w = decay_weights(int(self.global_step), int(self.hparams.coarse_epochs) * self.steps_per_epoch, len(levels)).to(L.device)
+            wl = w.to(L.dtype)
+            return (wl * L).sum() / wl.sum(), w, {"loss/con_uniform": float(all_reduce_sum(L.detach().double()).mean())}
         if scheme == "uniform" or len(levels) == 1:
             return L.mean(), None, {}
         n = len(levels)
@@ -340,7 +359,7 @@ class P1Module(L.LightningModule):
     @torch.no_grad()
     def _full_log(self, v_all, feats, sizes, sp_all, off, n_loc, levels) -> Dict[str, float]:
         out = {}
-        if self.loss_kind == "flat":  # preflight reading S42: the six other levels, no gradient
+        if len(levels) == 1:  # preflight reading S42: the six untrained levels, no gradient (arm a, and the two-stage schedule after its switch)
             extra = self._contrastive(v_all[off: off + n_loc], v_all, sp_all, off, n_loc, list(range(6)), grad=False)
             red = all_reduce_sum(torch.stack([extra[d][k] for d in range(6) for k in ("i2t", "t2i", "t2i_floor")]).double())
             for d in range(6):

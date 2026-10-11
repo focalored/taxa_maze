@@ -11,6 +11,9 @@ lora_towers: both      # both = spec lines 61, 154; image = image-side LoRA only
 level_weighting: uniform   # line 96's mean over the seven levels (BFL Eq. 3); lse | ratio | gradnorm are A15 second-phase probes (Amendment 3)
 lse_tau: 1.0           # lse: temperature in nats of the loss above its floor (TaxaWalk uses 0.1 on squared distances of unit vectors)
 ratio_ref_steps: 50    # ratio: each level's reference is its mean loss above the floor over the first 50 steps
+level_schedule: none   # M3 two-stage schedule (Amendment 4 draft): none = line 96; switch = seven levels for the first coarse_epochs epochs, then species only (arm a's objective); decay = coarse weights fall linearly to 0 over coarse_epochs epochs
+coarse_epochs: 1       # epochs with coarse supervision under level_schedule=switch|decay (0-based epochs 0..coarse_epochs-1)
+train_text_form: photo # line 51(a): "a photo of <lineage>." for every training label; lineage = the bare lineage (M3 recipe knob); evaluation always scores both
 seed: ${seed}
 epochs: 10             # line 161: the schedule always counts 10 epochs; the sweep stops at trainer.max_epochs=3
 warmup_frac: 0.01
