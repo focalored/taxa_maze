@@ -135,6 +135,12 @@ class P1TolDataModule(L.LightningDataModule):
         if self.target_world_size is not None and world != self.target_world_size and world != 1:
             raise RuntimeError(f"world {world} != planned {self.target_world_size}")
         ds = PlanDataset(self.tree, self.store, self.K, self.B, world, rank, self.seed, self.sampler)
+        if self.trainer is not None:
+            # Resume fix (2026-10-11, M2 checker N9 / resume audit G1): Lightning iterates the loader once while setting it up,
+            # which forks the workers before it calls set_epoch for the restored epoch, and it does not re-iterate for the
+            # first resumed epoch. Build the plan for the epoch the fit loop is about to run (0 in a fresh run, the restored
+            # count on a resume; `current_epoch` still reads the old value at this point). training_step checks the batch's epoch.
+            ds.set_epoch(int(self.trainer.fit_loop.epoch_progress.current.processed))
         return DataLoader(ds, batch_size=None, sampler=PlanSampler(ds), num_workers=self.num_workers,
                           pin_memory=True, persistent_workers=False, prefetch_factor=2 if self.num_workers else None)
 

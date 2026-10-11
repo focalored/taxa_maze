@@ -281,6 +281,8 @@ class P1Module(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         t, h = self.global_step, self.hparams
+        if "epoch" in batch and int(batch["epoch"]) != int(self.current_epoch):  # the plan's epoch must be the trainer's (resume fix, 2026-10-11)
+            raise RuntimeError(f"batch plan is for epoch {int(batch['epoch'])} but the trainer is in epoch {int(self.current_epoch)}")
         t_start = time.perf_counter()
         monitor = self._is_monitor_step(t)
         full_log = monitor or t % h.monitor_every == 0
